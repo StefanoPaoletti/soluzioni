@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analisi Fidia</title>
+    <title>Analisi Soluzioni</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -83,7 +83,7 @@
           const priceTimerRef = useRef(null);
           
           useEffect(() => {
-            const stored = localStorage.getItem('fidiaAppPassword');
+            const stored = localStorage.getItem('soluzioniAppPassword');
             if (stored) {
               setSavedPassword(stored);
               setIsAuthenticated(true);
@@ -202,7 +202,7 @@
               
               // Password corretta - chiudi modale e procedi
               setModal({ show: false, type: '', title: '', message: '' });
-              localStorage.setItem('fidiaAppPassword', password);
+              localStorage.setItem('soluzioniAppPassword', password);
               setSavedPassword(password);
               setIsAuthenticated(true);
               await loadFromGoogleSheets(password);
@@ -213,7 +213,7 @@
           };
           
           const handleLogout = () => {
-            localStorage.removeItem('fidiaAppPassword');
+            localStorage.removeItem('soluzioniAppPassword');
             setSavedPassword('');
             setIsAuthenticated(false);
             setPassword('');
