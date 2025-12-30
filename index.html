@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Analisi Fidia</title>
+    <title>Analisi Soluzioni</title>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
@@ -30,8 +30,8 @@
         
         const YEARS = ['2019', '2020', '2021', '2022', '2023', '2024', '2025', '2026'];
         
-        const SHEET_ID = '1nxpfRDCh3FPb138yl4j5vfkIUjdvyMWvLiyOBat8KZc';
-        const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxv9Xxi4i-Kw0pPK8Xd7YYFpqr992YCoTd7mZog77PYDlXosRMnY_3sQ6hZOC5pBgVq/exec';
+        const SHEET_ID = 'AKfycbxMF1lO6dbrNUVMaNA1sJBC8Q_7MHROyO3aOygYF3sOuZ863R3dtIfrsCWoR7LgolZgNQ';
+        const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxMF1lO6dbrNUVMaNA1sJBC8Q_7MHROyO3aOygYF3sOuZ863R3dtIfrsCWoR7LgolZgNQ/exec';
         
         function App() {
           const [isAuthenticated, setIsAuthenticated] = useState(false);
@@ -83,7 +83,7 @@
           const priceTimerRef = useRef(null);
           
           useEffect(() => {
-            const stored = localStorage.getItem('fidiaAppPassword');
+            const stored = localStorage.getItem('soluzioniAppPassword');
             if (stored) {
               setSavedPassword(stored);
               setIsAuthenticated(true);
@@ -202,7 +202,7 @@
               
               // Password corretta - chiudi modale e procedi
               setModal({ show: false, type: '', title: '', message: '' });
-              localStorage.setItem('fidiaAppPassword', password);
+              localStorage.setItem('soluzioniAppPassword', password);
               setSavedPassword(password);
               setIsAuthenticated(true);
               await loadFromGoogleSheets(password);
@@ -213,7 +213,7 @@
           };
           
           const handleLogout = () => {
-            localStorage.removeItem('fidiaAppPassword');
+            localStorage.removeItem('soluzioniAppPassword');
             setSavedPassword('');
             setIsAuthenticated(false);
             setPassword('');
@@ -418,7 +418,7 @@
               const time = `${now.getHours().toString().padStart(2, '0')}-${now.getMinutes().toString().padStart(2, '0')}`;
               const date = now.toISOString().split('T')[0];
               const link = document.createElement('a');
-              link.download = `fidia-margini-${selectedYear}-${date}-${time}.png`;
+              link.download = `soluzioni-margini-${selectedYear}-${date}-${time}.png`;
               link.href = canvas.toDataURL('image/png');
               link.click();
             } catch (err) {
@@ -522,7 +522,7 @@
               <>
                 <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
                   <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
-                    <h1 className="text-3xl font-bold text-gray-800 mb-6 text-center">Analisi Fidia</h1>
+                    <h1 className="text-3xl font-bold text-gray-800 mb-6 text-center">Analisi Soluzioni</h1>
                     <div className="space-y-4">
                       <div className="relative">
                         <input
@@ -604,7 +604,7 @@
               <div className="bg-white shadow">
                 <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4">
                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
-                    <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Analisi Fidia</h1>
+                    <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Analisi Soluzioni</h1>
                     <div className="flex gap-2 items-center flex-wrap">
                       <button onClick={loadFromGoogleSheets} disabled={isLoading} className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">
                         <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
@@ -1203,7 +1203,7 @@
                             type="text"
                             value={newProductName}
                             onChange={e => setNewProductName(e.target.value)}
-                            placeholder="es. MYRIALEN GEL"
+                            placeholder="es. OXISEPT"
                             className="w-full px-3 py-2 border rounded-lg"
                           />
                         </div>
