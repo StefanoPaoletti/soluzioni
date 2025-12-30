@@ -1,1 +1,1492 @@
-ciao!
+<!DOCTYPE html>
+<html lang="it">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Analisi Fidia</title>
+    <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="https://cdn.jsdelivr.net/npm/html2canvas@1.4.1/dist/html2canvas.min.js"></script>
+    <style>
+        .tab-active {
+            background: #3b82f6;
+            color: white;
+            box-shadow: 0 4px 6px -1px rgba(59, 130, 246, 0.3);
+        }
+        .status-good { background: #d1fae5; color: #065f46; }
+        .status-ok { background: #fef3c7; color: #92400e; }
+        .status-bad { background: #fee2e2; color: #991b1b; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+ 
+    <script type="text/babel">
+        const { useState, useEffect, useMemo, useRef } = React;
+     
+        // PRODUCTS viene generato dinamicamente da onlinePrices
+        
+        const YEARS = ['2019', '2020', '2021', '2022', '2023', '2024', '2025', '2026'];
+        
+        const SHEET_ID = '1FvExAXdbcPeA3vowfpVm1D4IO68GYF4s5GpzesvAJu8';
+        const SCRIPT_URL = 'https://script.google.com/macros/s/AKfycbxv9Xxi4i-Kw0pPK8Xd7YYFpqr992YCoTd7mZog77PYDlXosRMnY_3sQ6hZOC5pBgVq/exec';
+        
+        function App() {
+          const [isAuthenticated, setIsAuthenticated] = useState(false);
+          const [password, setPassword] = useState('');
+          const [showPassword, setShowPassword] = useState(false);
+          const [savedPassword, setSavedPassword] = useState('');
+          const [activeTab, setActiveTab] = useState('dashboard');
+          const [invoices, setInvoices] = useState([]);
+          const [creditNotes, setCreditNotes] = useState([]);
+          const [onlinePrices, setOnlinePrices] = useState({});
+          
+          // PRODUCTS derivato dinamicamente da onlinePrices
+          const PRODUCTS = Object.keys(onlinePrices).sort();
+          const [selectedYear, setSelectedYear] = useState(new Date().getFullYear().toString());
+          const [searchQuery, setSearchQuery] = useState('');
+          const [invoiceSearchQuery, setInvoiceSearchQuery] = useState('');
+          const [invoiceYearFilter, setInvoiceYearFilter] = useState(new Date().getFullYear().toString());
+          const [isLoading, setIsLoading] = useState(false);
+          
+          // Form fattura
+          const [invoiceDate, setInvoiceDate] = useState(new Date().toISOString().split('T')[0]);
+          const [invoiceNumber, setInvoiceNumber] = useState('');
+          const [shippingCost, setShippingCost] = useState('');
+          const [invoiceItems, setInvoiceItems] = useState([
+            { product: '', quantity: '', price: '', discount: '', vat: '22', freebies: '' }
+          ]);
+          const [editingInvoice, setEditingInvoice] = useState(null);
+          const [productDropdownOpen, setProductDropdownOpen] = useState({});
+          const [productSearchQuery, setProductSearchQuery] = useState({});
+          const productInputRefs = useRef({});
+          
+          // Stati per gestione prodotti
+          const [editingProduct, setEditingProduct] = useState(null);
+          const [newProductName, setNewProductName] = useState('');
+          const [newProductPrice, setNewProductPrice] = useState('');
+          const [productListSearch, setProductListSearch] = useState('');
+          const [showWarningModal, setShowWarningModal] = useState(false);
+          const [warningProduct, setWarningProduct] = useState('');
+          
+          // Sistema modale unificato
+          const [modal, setModal] = useState({ show: false, type: '', title: '', message: '' });
+          const [confirmModal, setConfirmModal] = useState({ show: false, title: '', message: '', onConfirm: null });
+          
+          // Form nota credito
+          const [creditDate, setCreditDate] = useState(new Date().toISOString().split('T')[0]);
+          const [creditAmount, setCreditAmount] = useState('');
+          
+          // Timer per prezzi online
+          const priceTimerRef = useRef(null);
+          
+          useEffect(() => {
+            const stored = localStorage.getItem('fidiaAppPassword');
+            if (stored) {
+              setSavedPassword(stored);
+              setIsAuthenticated(true);
+              loadFromGoogleSheets(stored);
+            }
+          }, []);
+          
+          const loadFromGoogleSheets = async (pwd = savedPassword) => {
+            setIsLoading(true);
+            try {
+              console.log('📡 Caricamento dati da:', SCRIPT_URL);
+              const response = await fetch(SCRIPT_URL);
+              console.log('📥 Risposta ricevuta:', response.status, response.statusText);
+              
+              if (!response.ok) {
+                console.error('❌ Risposta non OK:', response.status);
+                throw new Error(`Errore server: ${response.status}`);
+              }
+              
+              const data = await response.json();
+              console.log('✅ Dati ricevuti:', data);
+              
+              const invoiceMap = {};
+              (data.invoices || []).forEach(row => {
+                if (!invoiceMap[row.id]) {
+                  // Corregge il formato data: se è una stringa tipo "2026-01-01", la converte correttamente
+                  let dateStr = row.date;
+                  if (typeof dateStr === 'string' && dateStr.includes('-')) {
+                    // Formato YYYY-MM-DD
+                    dateStr = dateStr.split('T')[0]; // Rimuove eventuale parte time
+                  }
+                  
+                  invoiceMap[row.id] = {
+                    id: row.id,
+                    year: row.year,
+                    date: dateStr,
+                    number: row.number,
+                    shippingCost: row.shippingCost || 0,
+                    items: []
+                  };
+                }
+                invoiceMap[row.id].items.push({
+                  product: row.product,
+                  quantity: row.quantity,
+                  priceGross: row.priceGross,
+                  priceNet: row.priceNet,
+                  discount: row.discount || 0,
+                  vat: row.vat,
+                  freebies: row.freebies
+                });
+              });
+              
+              setInvoices(Object.values(invoiceMap));
+              setCreditNotes(data.creditNotes || []);
+              setOnlinePrices(data.onlinePrices || {});
+              console.log('✅ Dati caricati con successo');
+            } catch (error) {
+              console.error('❌ Errore caricamento completo:', error);
+              setModal({ show: true, type: 'error', title: 'Errore caricamento', message: error.message });
+            }
+            setIsLoading(false);
+          };
+          
+          const saveToGoogleSheets = async (action, payload, skipReload = false) => {
+            if (!savedPassword) return false;
+            setIsLoading(true);
+            try {
+              await fetch(SCRIPT_URL, {
+                method: 'POST',
+                body: JSON.stringify({ password: savedPassword, action, ...payload }),
+                mode: 'no-cors'
+              });
+              
+              // Con no-cors non possiamo leggere la risposta, quindi aspettiamo
+              await new Promise(r => setTimeout(r, 1500));
+              
+              // Ricarica solo se non è un'azione con optimistic update
+              if (!skipReload) {
+                await loadFromGoogleSheets();
+              } else {
+                setIsLoading(false);
+              }
+              
+              return true;
+            } catch (error) {
+              console.error(error);
+              setModal({ show: true, type: 'error', title: 'Errore salvataggio', message: error.message });
+              setIsLoading(false);
+              return false;
+            }
+          };
+          
+          const handleLogin = async () => {
+            if (!password) return setModal({ show: true, type: 'warning', title: 'Password richiesta', message: 'Inserisci la password per accedere.' });
+            
+            // Chiudi eventuali modali aperti
+            setModal({ show: false, type: '', title: '', message: '' });
+            
+            setIsLoading(true);
+            try {
+              // Verifica password facendo una chiamata POST di test
+              const response = await fetch(SCRIPT_URL, {
+                method: 'POST',
+                body: JSON.stringify({ 
+                  password: password, 
+                  action: 'testPassword'
+                })
+              });
+              
+              const result = await response.json();
+              
+              if (result.success === false) {
+                setIsLoading(false);
+                return setModal({ show: true, type: 'error', title: 'Password errata', message: 'La password inserita non è corretta.' });
+              }
+              
+              // Password corretta - chiudi modale e procedi
+              setModal({ show: false, type: '', title: '', message: '' });
+              localStorage.setItem('fidiaAppPassword', password);
+              setSavedPassword(password);
+              setIsAuthenticated(true);
+              await loadFromGoogleSheets(password);
+            } catch (error) {
+              setIsLoading(false);
+              setModal({ show: true, type: 'error', title: 'Errore login', message: 'Impossibile verificare la password.' });
+            }
+          };
+          
+          const handleLogout = () => {
+            localStorage.removeItem('fidiaAppPassword');
+            setSavedPassword('');
+            setIsAuthenticated(false);
+            setPassword('');
+            setInvoices([]);
+            setCreditNotes([]);
+            setOnlinePrices({});
+          };
+          
+          const addInvoiceItem = () => setInvoiceItems([...invoiceItems, { product: '', quantity: '', price: '', discount: '', vat: '22', freebies: '' }]);
+          const removeInvoiceItem = index => setInvoiceItems(invoiceItems.filter((_, i) => i !== index));
+          const updateInvoiceItem = (index, field, value) => {
+            const updated = [...invoiceItems];
+            updated[index][field] = value;
+            setInvoiceItems(updated);
+          };
+          
+          const resetForm = () => {
+            setEditingInvoice(null);
+            setInvoiceDate(new Date().toISOString().split('T')[0]);
+            setInvoiceNumber('');
+            setShippingCost('');
+            setInvoiceItems([{ product: '', quantity: '', price: '', discount: '', vat: '22', freebies: '' }]);
+          };
+          
+          // Chiudi dropdown prodotti al click esterno
+          useEffect(() => {
+            const handleClickOutside = (e) => {
+              if (!e.target.closest('.relative')) {
+                setProductDropdownOpen({});
+              }
+            };
+            document.addEventListener('mousedown', handleClickOutside);
+            return () => document.removeEventListener('mousedown', handleClickOutside);
+          }, []);
+          
+          const saveInvoice = async () => {
+            const validItems = invoiceItems.filter(i => i.product && i.quantity && i.price);
+            if (!invoiceDate || !invoiceNumber || validItems.length === 0) return setModal({ show: true, type: 'warning', title: 'Campi obbligatori', message: 'Compila data, numero fattura e almeno un prodotto con quantità e prezzo.' });
+            
+            const shipping = parseFloat(shippingCost) || 0;
+            const year = new Date(invoiceDate).getFullYear().toString();
+            
+            const newInvoice = {
+              id: Date.now(),
+              date: invoiceDate,
+              number: invoiceNumber,
+              year: year,
+              shippingCost: shipping,
+              items: validItems.map(item => ({
+                product: item.product,
+                quantity: parseFloat(item.quantity),
+                priceGross: parseFloat(item.price),
+                priceNet: parseFloat(item.price) * (1 - (parseFloat(item.discount) || 0) / 100),
+                discount: parseFloat(item.discount) || 0,
+                vat: item.vat || '10',
+                freebies: parseFloat(item.freebies) || 0
+              }))
+            };
+            
+            const success = await saveToGoogleSheets('saveInvoice', newInvoice);
+            if (success) {
+              resetForm();
+              setModal({ show: true, type: 'success', title: 'Fattura salvata', message: 'La fattura è stata salvata con successo!' });
+            }
+          };
+          
+          const updateInvoice = async () => {
+            const validItems = invoiceItems.filter(i => i.product && i.quantity && i.price);
+            if (!invoiceDate || !invoiceNumber || validItems.length === 0) return setModal({ show: true, type: 'warning', title: 'Campi obbligatori', message: 'Compila data, numero fattura e almeno un prodotto con quantità e prezzo.' });
+            
+            const shipping = parseFloat(shippingCost) || 0;
+            const year = new Date(invoiceDate).getFullYear().toString();
+            
+            const updatedInvoice = {
+              id: editingInvoice.id,
+              date: invoiceDate,
+              number: invoiceNumber,
+              year: year,
+              shippingCost: shipping,
+              items: validItems.map(item => ({
+                product: item.product,
+                quantity: parseFloat(item.quantity),
+                priceGross: parseFloat(item.price),
+                priceNet: parseFloat(item.price) * (1 - (parseFloat(item.discount) || 0) / 100),
+                discount: parseFloat(item.discount) || 0,
+                vat: item.vat || '10',
+                freebies: parseFloat(item.freebies) || 0
+              }))
+            };
+            
+            const success = await saveToGoogleSheets('updateInvoice', updatedInvoice);
+            if (success) {
+              resetForm();
+              setModal({ show: true, type: 'success', title: 'Fattura aggiornata', message: 'Le modifiche sono state salvate con successo!' });
+            }
+          };
+          
+          const deleteInvoice = async (id) => {
+            setConfirmModal({
+              show: true,
+              title: 'Elimina fattura',
+              message: 'Sei sicuro di voler eliminare definitivamente questa fattura?',
+              onConfirm: async () => {
+                setConfirmModal({ show: false, title: '', message: '', onConfirm: null });
+                
+                // Optimistic update: aggiorna UI immediatamente
+                const oldInvoices = [...invoices];
+                setInvoices(invoices.filter(inv => inv.id !== id));
+                
+                // Salva in background senza ricaricare (skipReload = true)
+                const success = await saveToGoogleSheets('deleteInvoice', { id }, true);
+                
+                // Se fallisce, ripristina
+                if (!success) {
+                  setInvoices(oldInvoices);
+                }
+              }
+            });
+          };
+          
+          const startEditInvoice = (invoice) => {
+            setEditingInvoice(invoice);
+            // Usa direttamente la stringa data senza conversioni per evitare problemi timezone
+            setInvoiceDate(invoice.date);
+            setInvoiceNumber(invoice.number);
+            setShippingCost(invoice.shippingCost || '');
+            setInvoiceItems(invoice.items.map(item => ({
+              product: item.product,
+              quantity: item.quantity,
+              price: item.priceGross,
+              discount: item.discount || '',
+              vat: item.vat || '10',
+              freebies: item.freebies || ''
+            })));
+            window.scrollTo({ top: 0, behavior: 'smooth' });
+          };
+          
+          const saveCreditNote = async () => {
+            if (!creditAmount || parseFloat(creditAmount) <= 0) return setModal({ show: true, type: 'warning', title: 'Importo non valido', message: 'Inserisci un importo maggiore di zero.' });
+            const year = new Date(creditDate).getFullYear();
+            const newNote = {
+              id: Date.now(),
+              year: year,
+              date: creditDate,
+              amount: parseFloat(creditAmount)
+            };
+            const success = await saveToGoogleSheets('saveCreditNote', newNote);
+            if (success) {
+              setCreditAmount('');
+              setCreditDate(new Date().toISOString().split('T')[0]);
+              setModal({ show: true, type: 'success', title: 'Nota salvata', message: 'La nota di credito è stata salvata con successo!' });
+            }
+          };
+          
+          const deleteCreditNote = async (id) => {
+            setConfirmModal({
+              show: true,
+              title: 'Elimina nota di credito',
+              message: 'Sei sicuro di voler eliminare questa nota di credito?',
+              onConfirm: async () => {
+                setConfirmModal({ show: false, title: '', message: '', onConfirm: null });
+                
+                // Optimistic update: aggiorna UI immediatamente
+                const oldCreditNotes = [...creditNotes];
+                setCreditNotes(creditNotes.filter(note => note.id !== id));
+                
+                // Salva in background senza ricaricare (skipReload = true)
+                const success = await saveToGoogleSheets('deleteCreditNote', { id }, true);
+            
+                // Se fallisce, ripristina
+                if (!success) {
+                  setCreditNotes(oldCreditNotes);
+                }
+              }
+            });
+          };
+          
+          const handlePriceChange = (product, value) => {
+            const newPrices = { ...onlinePrices, [product]: parseFloat(value) || 0 };
+            setOnlinePrices(newPrices);
+            if (priceTimerRef.current) clearTimeout(priceTimerRef.current);
+            priceTimerRef.current = setTimeout(() => {
+              if (value !== '') {
+                saveToGoogleSheets('saveOnlinePrice', { product, price: parseFloat(value) || 0 });
+              }
+            }, 2000);
+          };
+          
+          const exportDashboardImage = async () => {
+            const el = document.getElementById('dashboard-table');
+            const searchBar = document.getElementById('search-bar');
+            const infoIcons = document.querySelectorAll('.info-icon');
+            if (!el) return setModal({ show: true, type: 'error', title: 'Errore export', message: 'Impossibile trovare la tabella da esportare.' });
+            
+            // Nascondi la barra di ricerca e le icone info temporaneamente
+            if (searchBar) searchBar.style.display = 'none';
+            infoIcons.forEach(icon => icon.style.display = 'none');
+            
+            try {
+              const canvas = await html2canvas(el, { backgroundColor: '#ffffff', scale: 2 });
+              const now = new Date();
+              const time = `${now.getHours().toString().padStart(2, '0')}-${now.getMinutes().toString().padStart(2, '0')}`;
+              const date = now.toISOString().split('T')[0];
+              const link = document.createElement('a');
+              link.download = `fidia-margini-${selectedYear}-${date}-${time}.png`;
+              link.href = canvas.toDataURL('image/png');
+              link.click();
+            } catch (err) {
+              setModal({ show: true, type: 'error', title: 'Errore export', message: 'Si è verificato un errore durante l\'esportazione dell\'immagine.' });
+            } finally {
+              // Mostra di nuovo la barra di ricerca e le icone info
+              if (searchBar) searchBar.style.display = 'block';
+              infoIcons.forEach(icon => icon.style.display = 'block');
+            }
+          };
+          
+          // Analisi ottimizzata con useMemo
+          const analysis = useMemo(() => {
+            const result = {};
+            
+            const filteredInvoices = selectedYear === 'all'
+              ? invoices
+              : invoices.filter(inv => String(inv.year) === selectedYear);
+            
+            // ✅ PRE-CALCOLO: Totale costi per anno (una volta sola!)
+            const totalCostByYear = {};
+            filteredInvoices.forEach(invoice => {
+              const year = String(invoice.year);
+              if (!totalCostByYear[year]) totalCostByYear[year] = 0;
+              
+              const totalPieces = invoice.items.reduce((sum, i) => sum + (parseFloat(i.quantity) || 0) + (parseFloat(i.freebies) || 0), 0);
+              const shipping = parseFloat(invoice.shippingCost) || 0;
+              
+              invoice.items.forEach(item => {
+                const qty = parseFloat(item.quantity) || 0;
+                const free = parseFloat(item.freebies) || 0;
+                const netPrice = parseFloat(item.priceNet || item.price) || 0;
+                const vat = parseFloat(item.vat) || 0;
+                const totalQty = qty + free;
+                const shippingShare = totalPieces > 0 ? (totalQty / totalPieces) * shipping : 0;
+                const priceWithVAT = qty * netPrice * (1 + vat / 100);
+                const shippingWithVAT = shippingShare * 1.22;
+                totalCostByYear[year] += priceWithVAT + shippingWithVAT;
+              });
+            });
+            
+            PRODUCTS.forEach(product => {
+              let totalCost = 0;
+              let totalQuantity = 0;
+              let yearCost = {};
+              let yearQuantity = {};
+              
+              filteredInvoices.forEach(invoice => {
+                const totalPieces = invoice.items.reduce((sum, i) => sum + (parseFloat(i.quantity) || 0) + (parseFloat(i.freebies) || 0), 0);
+                const shipping = parseFloat(invoice.shippingCost) || 0;
+                
+                invoice.items.forEach(item => {
+                  if (item.product !== product) return;
+                  
+                  const qty = parseFloat(item.quantity) || 0;
+                  const free = parseFloat(item.freebies) || 0;
+                  const netPrice = parseFloat(item.priceNet || item.price) || 0;
+                  const vat = parseFloat(item.vat) || 0;
+                  const totalQty = qty + free;
+                  
+                  const shippingShare = totalPieces > 0 ? (totalQty / totalPieces) * shipping : 0;
+                  const priceWithVAT = qty * netPrice * (1 + vat / 100);
+                  const shippingWithVAT = shippingShare * 1.22;
+                  const itemCost = priceWithVAT + shippingWithVAT;
+                  
+                  totalCost += itemCost;
+                  totalQuantity += totalQty;
+                  
+                  if (!yearCost[invoice.year]) yearCost[invoice.year] = 0;
+                  if (!yearQuantity[invoice.year]) yearQuantity[invoice.year] = 0;
+                  yearCost[invoice.year] += itemCost;
+                  yearQuantity[invoice.year] += totalQty;
+                });
+              });
+              
+              // Note di credito proporzionali per anno
+              const relevantCredits = selectedYear === 'all' ? creditNotes : creditNotes.filter(c => String(c.year) === selectedYear);
+              
+              relevantCredits.forEach(c => {
+                const creditYear = String(c.year);
+                if (yearCost[creditYear] && totalCostByYear[creditYear]) {
+                  // ✅ Usa il pre-calcolo invece di ricalcolare!
+                  const prop = yearCost[creditYear] / totalCostByYear[creditYear];
+                  yearCost[creditYear] -= c.amount * prop;
+                }
+              });
+              
+              const finalCost = Object.values(yearCost).reduce((a, b) => a + b, 0);
+              const avgCost = totalQuantity > 0 ? finalCost / totalQuantity : 0;
+              const online = onlinePrices[product] || 0;
+              const margin = online > 0 ? ((online - avgCost) / online) * 100 : 0;
+              
+              result[product] = { avgRealCost: avgCost, onlinePrice: online, margin, totalQuantity };
+            });
+            
+            return result;
+          }, [invoices, creditNotes, onlinePrices, selectedYear]);
+          
+          if (!isAuthenticated) {
+            return (
+              <>
+                <div className="min-h-screen bg-gradient-to-br from-blue-50 to-indigo-100 flex items-center justify-center p-4">
+                  <div className="bg-white rounded-lg shadow-xl p-8 w-full max-w-md">
+                    <h1 className="text-3xl font-bold text-gray-800 mb-6 text-center">Analisi Fidia</h1>
+                    <div className="space-y-4">
+                      <div className="relative">
+                        <input
+                          type={showPassword ? 'text' : 'password'}
+                          value={password}
+                          onChange={e => setPassword(e.target.value)}
+                          onKeyPress={e => e.key === 'Enter' && handleLogin()}
+                          placeholder="Inserisci password"
+                          className="w-full px-4 py-3 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500"
+                        />
+                        <button onClick={() => setShowPassword(!showPassword)} className="absolute right-3 top-3 text-gray-600 hover:text-gray-800">
+                          {showPassword ? (
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M3.98 8.223A10.477 10.477 0 0 0 1.934 12C3.226 16.338 7.244 19.5 12 19.5c.993 0 1.953-.138 2.863-.395M6.228 6.228A10.451 10.451 0 0 1 12 4.5c4.756 0 8.773 3.162 10.065 7.498a10.522 10.522 0 0 1-4.293 5.774M6.228 6.228 3 3m3.228 3.228 3.65 3.65m7.894 7.894L21 21m-3.228-3.228-3.65-3.65m0 0a3 3 0 1 0-4.243-4.243m4.242 4.242L9.88 9.88" />
+                            </svg>
+                          ) : (
+                            <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M2.036 12.322a1.012 1.012 0 0 1 0-.639C3.423 7.51 7.36 4.5 12 4.5c4.638 0 8.573 3.007 9.963 7.178.07.207.07.431 0 .639C20.577 16.49 16.64 19.5 12 19.5c-4.638 0-8.573-3.007-9.963-7.178Z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 1 1-6 0 3 3 0 0 1 6 0Z" />
+                            </svg>
+                          )}
+                        </button>
+                      </div>
+                      <button onClick={handleLogin} className="w-full bg-blue-600 text-white py-3 rounded-lg font-semibold hover:bg-blue-700">
+                        Accedi
+                      </button>
+                    </div>
+                  </div>
+                </div>
+                
+                {/* Modale errori login */}
+                {modal.show && (
+                  <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[10000] p-4">
+                    <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                      <div className="flex items-start gap-4">
+                        <div className="flex-shrink-0">
+                          {modal.type === 'error' && (
+                            <svg className="w-12 h-12 text-red-500" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                            </svg>
+                          )}
+                          {modal.type === 'warning' && (
+                            <svg className="w-12 h-12 text-amber-500" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M10.05 4.575a1.575 1.575 0 1 0-3.15 0v3m3.15-3v-1.5a1.575 1.575 0 0 1 3.15 0v1.5m-3.15 0 .075 5.925m3.075.75V4.575m0 0a1.575 1.575 0 0 1 3.15 0V15M6.9 7.575a1.575 1.575 0 1 0-3.15 0v8.175a6.75 6.75 0 0 0 6.75 6.75h2.018a5.25 5.25 0 0 0 3.712-1.538l1.732-1.732a5.25 5.25 0 0 0 1.538-3.712l.003-2.024a.668.668 0 0 1 .198-.471 1.575 1.575 0 1 0-2.228-2.228 3.818 3.818 0 0 0-1.12 2.687M6.9 7.575V12m6.27 4.318A4.49 4.49 0 0 1 16.35 15m.002 0h-.002" />
+                            </svg>
+                          )}
+                        </div>
+                        <div className="flex-1">
+                          <h3 className="text-lg font-bold text-gray-900 mb-2">{modal.title}</h3>
+                          <p className="text-gray-700">{modal.message}</p>
+                        </div>
+                      </div>
+                      <div className="mt-6 flex justify-end">
+                        <button
+                          onClick={() => setModal({ show: false, type: '', title: '', message: '' })}
+                          className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                        >
+                          OK
+                        </button>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </>
+            );
+          }
+          
+          return (
+            <div className="min-h-screen bg-gray-50">
+              {isLoading && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center">
+                  <div className="bg-white rounded-lg p-8 flex items-center gap-4 shadow-2xl">
+                    <div className="animate-spin rounded-full h-12 w-12 border-b-4 border-blue-600"></div>
+                    <span className="text-xl font-medium">Sincronizzazione...</span>
+                  </div>
+                </div>
+              )}
+              
+              <div className="bg-white shadow">
+                <div className="max-w-7xl mx-auto px-4 py-3 sm:py-4">
+                  <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                    <h1 className="text-xl sm:text-2xl font-bold text-gray-800">Analisi Fidia</h1>
+                    <div className="flex gap-2 items-center flex-wrap">
+                      <button onClick={loadFromGoogleSheets} disabled={isLoading} className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-blue-600 text-white rounded hover:bg-blue-700 text-sm">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0 3.181 3.183a8.25 8.25 0 0 0 13.803-3.7M4.031 9.865a8.25 8.25 0 0 1 13.803-3.7l3.181 3.182m0-4.991v4.99" />
+                        </svg>
+                        <span>Ricarica</span>
+                      </button>
+                      <a href={`https://docs.google.com/spreadsheets/d/${SHEET_ID}/edit`} target="_blank" className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-green-600 text-white rounded hover:bg-green-700 text-sm whitespace-nowrap">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M3.375 19.5h17.25m-17.25 0a1.125 1.125 0 0 1-1.125-1.125M3.375 19.5h7.5c.621 0 1.125-.504 1.125-1.125m-9.75 0V5.625m0 12.75v-1.5c0-.621.504-1.125 1.125-1.125m18.375 2.625V5.625m0 12.75c0 .621-.504 1.125-1.125 1.125m1.125-1.125v-1.5c0-.621-.504-1.125-1.125-1.125m0 3.75h-7.5A1.125 1.125 0 0 1 12 18.375m9.75-12.75c0-.621-.504-1.125-1.125-1.125H3.375c-.621 0-1.125.504-1.125 1.125m19.5 0v1.5c0 .621-.504 1.125-1.125 1.125M2.25 5.625v1.5c0 .621.504 1.125 1.125 1.125m0 0h17.25m-17.25 0h7.5c.621 0 1.125.504 1.125 1.125M3.375 8.25c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125m17.25-3.75h-7.5c-.621 0-1.125.504-1.125 1.125m8.625-1.125c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125v1.5c0 .621.504 1.125 1.125 1.125M12 10.875v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 10.875c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125M13.125 12h7.5m-7.5 0c-.621 0-1.125.504-1.125 1.125M20.625 12c.621 0 1.125.504 1.125 1.125v1.5c0 .621-.504 1.125-1.125 1.125m-17.25 0h7.5M12 14.625v-1.5m0 1.5c0 .621-.504 1.125-1.125 1.125M12 14.625c0 .621.504 1.125 1.125 1.125m-2.25 0c.621 0 1.125.504 1.125 1.125m0 1.5v-1.5m0 0c0-.621.504-1.125 1.125-1.125m0 0h7.5" />
+                        </svg>
+                        <span>Sheets</span>
+                      </a>
+                      <button onClick={handleLogout} className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-red-600 text-white rounded hover:bg-red-700 text-sm">
+                        <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M8.25 9V5.25A2.25 2.25 0 0 1 10.5 3h6a2.25 2.25 0 0 1 2.25 2.25v13.5A2.25 2.25 0 0 1 16.5 21h-6a2.25 2.25 0 0 1-2.25-2.25V15m-3 0-3-3m0 0 3-3m-3 3H15" />
+                        </svg>
+                        <span>Logout</span>
+                      </button>
+                    </div>
+                  </div>
+                  <div className="flex gap-2 sm:gap-4 mt-4 sm:mt-6 overflow-x-auto pb-2 -mx-4 px-4">
+                    {['dashboard', 'invoices', 'credits', 'products'].map(tab => (
+                      <button
+                        key={tab}
+                        onClick={() => setActiveTab(tab)}
+                        className={`px-4 sm:px-6 py-2 rounded font-medium whitespace-nowrap text-sm sm:text-base transition-all ${activeTab === tab ? 'tab-active' : 'bg-gray-200 text-gray-700 hover:bg-gray-300'}`}
+                      >
+                        {tab === 'dashboard' ? 'Dashboard' : tab === 'invoices' ? 'Fatture' : tab === 'credits' ? 'Note Credito' : 'Prodotti'}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </div>
+              
+              <div className="max-w-7xl mx-auto px-4 py-8">
+                {/* DASHBOARD */}
+                {activeTab === 'dashboard' && (
+                  <div className="space-y-6">
+                    {/* HEADER CON FILTRI */}
+                    <div className="bg-white rounded-lg shadow p-4">
+                      <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3">
+                        <div className="flex items-center gap-2">
+                          <h2 className="text-2xl font-bold text-gray-800">Analisi Margini</h2>
+                          <div className="relative group info-icon">
+                            <svg className="w-6 h-6 text-gray-400 cursor-help" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+                            </svg>
+                            <div className="absolute left-1/2 -translate-x-1/2 top-8 hidden group-hover:block z-10 w-56 sm:w-80 px-3 py-2.5 text-xs sm:text-sm text-white bg-gray-700 rounded-lg shadow-xl">
+                              <div className="mb-2">
+                                Il costo reale è calcolato come:<br/>
+                                (Prezzo - Sconto + IVA + Spese ivate) ÷ Quantità totale (inclusi omaggi)
+                              </div>
+                              <div className="text-xs border-t border-gray-500 pt-2 mt-2 space-y-0.5">
+                                <div>* COSTO REALE IVA inclusa</div>
+                                <div>* PREZZO ONLINE IVA inclusa</div>
+                              </div>
+                              <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-700 transform rotate-45"></div>
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex flex-col sm:flex-row gap-3 items-stretch sm:items-center w-full sm:w-auto">
+                          <select value={selectedYear} onChange={e => setSelectedYear(e.target.value)} className="px-4 py-2.5 border rounded-lg text-base bg-white font-medium">
+                            <option value="all">Tutti gli anni</option>
+                            {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+                          </select>
+                          <button onClick={exportDashboardImage} className="flex items-center gap-2 px-4 py-2 bg-purple-600 text-white rounded-lg hover:bg-purple-700 text-sm font-medium">
+                            <svg className="w-4 h-4" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M6.827 6.175A2.31 2.31 0 0 1 5.186 7.23c-.38.054-.757.112-1.134.175C2.999 7.58 2.25 8.507 2.25 9.574V18a2.25 2.25 0 0 0 2.25 2.25h15A2.25 2.25 0 0 0 21.75 18V9.574c0-1.067-.75-1.994-1.802-2.169a47.865 47.865 0 0 0-1.134-.175 2.31 2.31 0 0 1-1.64-1.055l-.822-1.316a2.192 2.192 0 0 0-1.736-1.039 48.774 48.774 0 0 0-5.232 0 2.192 2.192 0 0 0-1.736 1.039l-.821 1.316Z" />
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 12.75a4.5 4.5 0 1 1-9 0 4.5 4.5 0 0 1 9 0ZM18.75 10.5h.008v.008h-.008V10.5Z" />
+                            </svg>
+                            <span>Esporta Immagine</span>
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                    
+                    <div id="dashboard-table">
+                      {/* STATISTICHE PRINCIPALI - CARDS */}
+                      {(() => {
+                        const activeProducts = Object.entries(analysis).filter(([, d]) => d.totalQuantity > 0);
+                        const revenue = activeProducts.reduce((s, [, d]) => s + d.onlinePrice * d.totalQuantity, 0);
+                        const cost = activeProducts.reduce((s, [, d]) => s + d.avgRealCost * d.totalQuantity, 0);
+                        const weightedMargin = revenue > 0 ? ((revenue - cost) / revenue) * 100 : 0;
+                        
+                        const filtered = selectedYear === 'all' ? invoices : invoices.filter(i => String(i.year) === selectedYear);
+                        let totalFree = 0, totalFreeValue = 0, totalPurchaseValue = 0;
+                        
+                        filtered.forEach(inv => {
+                          inv.items.forEach(item => {
+                            const qty = parseFloat(item.quantity) || 0;
+                            const free = parseFloat(item.freebies) || 0;
+                            const net = parseFloat(item.priceNet || item.price) || 0;
+                            const vat = parseFloat(item.vat) || 0;
+                            const priceIVA = net * (1 + vat / 100);
+                            totalFree += free;
+                            totalFreeValue += free * priceIVA;
+                            totalPurchaseValue += qty * priceIVA;
+                          });
+                        });
+                        
+                        const percOmaggi = totalPurchaseValue > 0 ? (totalFreeValue / totalPurchaseValue) * 100 : 0;
+                        
+                        return (
+                          <div className="grid grid-cols-2 lg:grid-cols-4 gap-3 sm:gap-4 mb-6">
+                            {/* TOTALE FATTURE */}
+                            <div className="bg-white rounded-lg shadow p-3 sm:p-5 border-l-4 border-orange-500">
+                              <div className="flex items-center justify-between mb-1">
+                                <div className="text-xs sm:text-sm font-medium text-gray-600">Totale Fatture</div>
+                                <div className="relative group info-icon">
+                                  <svg className="w-5 h-5 text-gray-400 cursor-help" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+                                  </svg>
+                                  <div className="absolute left-1/2 -translate-x-1/2 top-8 hidden group-hover:block z-10 w-56 sm:w-64 px-4 py-2.5 text-sm text-white bg-gray-700 rounded-lg shadow-xl">
+                                    Totale delle fatture incluse aliquote e spese
+                                    <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-700 transform rotate-45"></div>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-lg sm:text-2xl font-bold text-orange-600 break-words">€ {cost.toFixed(2)}</div>
+                            </div>
+                            
+                            {/* INCASSO POTENZIALE */}
+                            <div className="bg-white rounded-lg shadow p-3 sm:p-5 border-l-4 border-blue-500">
+                              <div className="flex items-center justify-between mb-1">
+                                <div className="text-xs sm:text-sm font-medium text-gray-600">Incasso Potenziale</div>
+                                <div className="relative group info-icon">
+                                  <svg className="w-5 h-5 text-gray-400 cursor-help" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                                    <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+                                  </svg>
+                                  <div className="absolute right-0 top-8 hidden group-hover:block z-10 w-56 sm:w-64 px-4 py-2.5 text-sm text-white bg-gray-700 rounded-lg shadow-xl">
+                                    Vendendo le quantità acquistate + omaggi al prezzo online
+                                    <div className="absolute -top-1 right-2 w-2 h-2 bg-gray-700 transform rotate-45"></div>
+                                  </div>
+                                </div>
+                              </div>
+                              <div className="text-lg sm:text-2xl font-bold text-blue-600 break-words">€ {revenue.toFixed(2)}</div>
+                            </div>
+                            
+                            {/* MARGINE MEDIO */}
+                            <div className={`bg-white rounded-lg shadow p-3 sm:p-5 border-l-4 ${weightedMargin < 20 ? 'border-red-500' : weightedMargin < 30 ? 'border-yellow-500' : 'border-green-500'}`}>
+                              <div className="text-xs sm:text-sm font-medium text-gray-600 mb-1">Margine Medio</div>
+                              <div className={`text-lg sm:text-2xl font-bold ${weightedMargin < 20 ? 'text-red-600' : weightedMargin < 30 ? 'text-yellow-600' : 'text-green-600'}`}>
+                                {weightedMargin.toFixed(1)}%
+                              </div>
+                              <div className="text-xs text-gray-500 mt-1">
+                                {weightedMargin < 20 ? 'Basso' : weightedMargin < 30 ? 'Medio' : 'Ottimo'}
+                              </div>
+                            </div>
+                            
+                            {/* OMAGGI */}
+                            {totalFree > 0 && (
+                              <div className="bg-white rounded-lg shadow p-3 sm:p-5 border-l-4 border-emerald-500">
+                                <div className="flex items-center justify-between mb-1">
+                                  <div className="text-xs sm:text-sm font-medium text-gray-600">Omaggi {selectedYear !== 'all' ? selectedYear : ''}</div>
+                                  <div className="relative group info-icon">
+                                    <svg className="w-5 h-5 text-gray-400 cursor-help" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                                      <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+                                    </svg>
+                                    <div className="absolute left-auto right-0 top-8 hidden group-hover:block z-10 w-56 sm:w-64 px-4 py-2.5 text-sm text-white bg-gray-700 rounded-lg shadow-xl">
+                                      Valore prezzo di fattura + aliquota
+                                      <div className="absolute -top-1 right-2 w-2 h-2 bg-gray-700 transform rotate-45"></div>
+                                    </div>
+                                  </div>
+                                </div>
+                                <div className="text-lg sm:text-2xl font-bold text-emerald-600">{percOmaggi.toFixed(1)}%</div>
+                                <div className="text-xs text-gray-500 mt-1">
+                                  {totalFree} pz • € {totalFreeValue.toFixed(2)}
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        );
+                      })()}
+                      
+                      {/* BARRA DI RICERCA PRODOTTI */}
+                      <div id="search-bar" className="bg-white rounded-lg shadow p-4 mb-4">
+                        <div className="relative">
+                          <svg className="absolute left-3 top-1/2 -translate-y-1/2 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+                          </svg>
+                          <input
+                            type="text"
+                            placeholder="Cerca prodotto..."
+                            value={searchQuery}
+                            onChange={(e) => setSearchQuery(e.target.value)}
+                            className="w-full pl-10 pr-4 py-2 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                          />
+                          {searchQuery && (
+                            <button
+                              onClick={() => setSearchQuery('')}
+                              className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-400 hover:text-gray-600"
+                            >
+                              ✕
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      
+                      {/* TABELLA PRODOTTI */}
+                      <div className="bg-white rounded-xl shadow overflow-hidden">
+                        <div className="overflow-x-auto">
+                          <table className="w-full">
+                            <thead className="bg-gray-50 border-b">
+                              <tr>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase">Prodotto</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase">Costo Reale</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase">Prezzo Online</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase">Margine</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase">Qtà Totale</th>
+                                <th className="px-6 py-3 text-left text-xs font-bold text-gray-600 uppercase">Status</th>
+                              </tr>
+                            </thead>
+                            <tbody className="divide-y divide-gray-100">
+                              {Object.entries(analysis)
+                                .filter(([, d]) => d.totalQuantity > 0)
+                                .filter(([product]) => product.toLowerCase().includes(searchQuery.toLowerCase()))
+                                .sort(([, a], [, b]) => a.margin - b.margin)
+                                .map(([product, data]) => (
+                                  <tr key={product} className="hover:bg-gray-50">
+                                    <td className="px-6 py-4 font-medium text-gray-800">{product}</td>
+                                    <td className="px-6 py-4 text-gray-700 whitespace-nowrap">€ {data.avgRealCost.toFixed(2)}</td>
+                                    <td className="px-6 py-4 font-medium text-blue-600 whitespace-nowrap">€ {data.onlinePrice.toFixed(2)}</td>
+                                    <td className="px-6 py-4">
+                                      <span className={`font-bold ${data.margin < 20 ? 'text-red-600' : data.margin < 30 ? 'text-yellow-600' : 'text-green-600'}`}>
+                                        {data.margin.toFixed(1)}%
+                                      </span>
+                                    </td>
+                                    <td className="px-6 py-4 text-gray-700">{data.totalQuantity} pz</td>
+                                    <td className="px-6 py-4">
+                                      <span className={`px-3 py-1 rounded text-xs font-bold ${data.margin < 20 ? 'status-bad' : data.margin < 30 ? 'status-ok' : 'status-good'}`}>
+                                        {data.margin < 20 ? 'Basso' : data.margin < 30 ? 'Buono' : 'Ottimo'}
+                                      </span>
+                                    </td>
+                                  </tr>
+                                ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* FATTURE */}
+                {activeTab === 'invoices' && (
+                  <div className="space-y-6">
+                    <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+                      <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6">
+                        {editingInvoice ? 'Modifica Fattura' : 'Nuova Fattura'}
+                      </h2>
+                      
+                      {/* INFO FATTURA */}
+                      <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 sm:gap-4 mb-4 sm:mb-6">
+                        <div>
+                          <label className="block text-sm font-medium mb-1">Data</label>
+                          <div className="flex justify-center sm:justify-start">
+                            <input type="date" value={invoiceDate} onChange={e => setInvoiceDate(e.target.value)} className="w-full px-3 py-2 border rounded-lg text-sm sm:text-base" />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium mb-1">Numero</label>
+                          <input type="text" value={invoiceNumber} onChange={e => setInvoiceNumber(e.target.value)} placeholder="es. 3060003884" className="w-full px-3 py-2 border rounded-lg text-sm sm:text-base" />
+                        </div>
+                        <div className="sm:col-span-2 lg:col-span-1">
+                          <div className="flex items-center gap-2 mb-1">
+                            <label className="block text-sm font-medium">Spese & Spedizione</label>
+                            <div className="relative group info-icon">
+                              <svg className="w-4 h-4 text-gray-400 cursor-help" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="m11.25 11.25.041-.02a.75.75 0 0 1 1.063.852l-.708 2.836a.75.75 0 0 0 1.063.853l.041-.021M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0Zm-9-3.75h.008v.008H12V8.25Z" />
+                              </svg>
+                              <div className="absolute left-1/2 -translate-x-1/2 top-6 hidden group-hover:block z-10 w-56 px-3 py-2 text-xs text-white bg-gray-700 rounded-lg shadow-xl">
+                                Importo senza IVA, verrà aggiunto il 22%
+                                <div className="absolute -top-1 left-1/2 -translate-x-1/2 w-2 h-2 bg-gray-700 transform rotate-45"></div>
+                              </div>
+                            </div>
+                          </div>
+                          <input type="number" step="0.01" value={shippingCost} onChange={e => setShippingCost(e.target.value)} placeholder="0.00" className="w-full px-3 py-2 border rounded-lg text-sm sm:text-base" />
+                        </div>
+                      </div>
+                      
+                      {shippingCost && parseFloat(shippingCost) > 0 && (
+                        <div className="mb-4 sm:mb-6 p-3 sm:p-4 bg-blue-50 border border-blue-300 rounded-lg text-blue-800 text-sm">
+                          ℹ️ Le spese di spedizione (€{parseFloat(shippingCost).toFixed(2)}) saranno ripartite proporzionalmente (IVA 22%).
+                        </div>
+                      )}
+                      
+                      {/* TABELLA PRODOTTI */}
+                      <div className="overflow-x-auto mb-4 sm:mb-6 -mx-4 sm:mx-0">
+                        <div className="inline-block min-w-full align-middle px-4 sm:px-0">
+                          <table className="min-w-full text-sm">
+                            <thead className="bg-gray-100">
+                              <tr>
+                                <th className="px-3 py-2 text-left font-semibold text-xs sm:text-sm whitespace-nowrap">Quantità</th>
+                                <th className="px-3 py-2 text-left font-semibold text-xs sm:text-sm whitespace-nowrap">Prodotto</th>
+                                <th className="px-3 py-2 text-left font-semibold text-xs sm:text-sm whitespace-nowrap">Prezzo Unit. €</th>
+                                <th className="px-3 py-2 text-left font-semibold text-xs sm:text-sm whitespace-nowrap">Sconto %</th>
+                                <th className="px-3 py-2 text-left font-semibold text-xs sm:text-sm whitespace-nowrap">IVA %</th>
+                                <th className="px-3 py-2 text-left font-semibold text-xs sm:text-sm whitespace-nowrap">Omaggi</th>
+                                <th className="px-3 py-2"></th>
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {invoiceItems.map((item, i) => (
+                                <tr key={i} className="border-b hover:bg-gray-50">
+                                  <td className="px-3 py-2">
+                                    <input 
+                                      type="number" 
+                                      value={item.quantity} 
+                                      onChange={e => updateInvoiceItem(i, 'quantity', e.target.value)} 
+                                      placeholder="es. 24"
+                                      className="w-20 sm:w-24 px-2 sm:px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500" 
+                                    />
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <div className="relative">
+                                      <input
+                                        ref={el => productInputRefs.current[i] = el}
+                                        type="text"
+                                        value={productSearchQuery[i] || item.product || ''}
+                                        onChange={e => {
+                                          setProductSearchQuery({...productSearchQuery, [i]: e.target.value});
+                                          setProductDropdownOpen({...productDropdownOpen, [i]: true});
+                                        }}
+                                        onFocus={() => setProductDropdownOpen({...productDropdownOpen, [i]: true})}
+                                        placeholder="Cerca prodotto..."
+                                        className="w-32 sm:w-full px-2 sm:px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                                      />
+                                      {productDropdownOpen[i] && (() => {
+                                        const rect = productInputRefs.current[i]?.getBoundingClientRect();
+                                        return rect ? (
+                                          <div 
+                                            style={{
+                                              position: 'fixed', 
+                                              top: `${rect.bottom + 4}px`, 
+                                              left: `${rect.left}px`,
+                                              width: `${rect.width}px`,
+                                              zIndex: 9999
+                                            }} 
+                                            className="bg-white border border-gray-300 rounded-lg shadow-lg max-h-60 overflow-y-auto"
+                                          >
+                                            {PRODUCTS.filter(p => 
+                                              p.toLowerCase().includes((productSearchQuery[i] || '').toLowerCase())
+                                            ).map(p => (
+                                              <div
+                                                key={p}
+                                                onClick={() => {
+                                                  updateInvoiceItem(i, 'product', p);
+                                                  setProductSearchQuery({...productSearchQuery, [i]: ''});
+                                                  setProductDropdownOpen({...productDropdownOpen, [i]: false});
+                                                }}
+                                                className="px-3 py-2 hover:bg-blue-50 cursor-pointer text-sm border-b border-gray-100 last:border-b-0"
+                                              >
+                                                {p}
+                                              </div>
+                                            ))}
+                                            {PRODUCTS.filter(p => 
+                                              p.toLowerCase().includes((productSearchQuery[i] || '').toLowerCase())
+                                            ).length === 0 && (
+                                              <div className="px-3 py-2 text-sm text-gray-500">Nessun prodotto trovato</div>
+                                            )}
+                                          </div>
+                                        ) : null;
+                                      })()}
+                                    </div>
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <input 
+                                      type="number" 
+                                      step="0.01" 
+                                      value={item.price} 
+                                      onChange={e => updateInvoiceItem(i, 'price', e.target.value)} 
+                                      placeholder="es. 9.46" 
+                                      className="w-24 sm:w-28 px-2 sm:px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500" 
+                                    />
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <input 
+                                      type="number" 
+                                      step="0.01" 
+                                      value={item.discount} 
+                                      onChange={e => updateInvoiceItem(i, 'discount', e.target.value)} 
+                                      placeholder="0" 
+                                      className="w-16 sm:w-20 px-2 sm:px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500" 
+                                    />
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <select 
+                                      value={item.vat} 
+                                      onChange={e => updateInvoiceItem(i, 'vat', e.target.value)} 
+                                      className="w-20 sm:w-24 px-2 sm:px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500"
+                                    >
+                                      <option value="10">10%</option>
+                                      <option value="22">22%</option>
+                                    </select>
+                                  </td>
+                                  <td className="px-3 py-2">
+                                    <input 
+                                      type="number" 
+                                      value={item.freebies} 
+                                      onChange={e => updateInvoiceItem(i, 'freebies', e.target.value)} 
+                                      placeholder="0" 
+                                      className="w-16 sm:w-20 px-2 sm:px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-500" 
+                                    />
+                                  </td>
+                                  <td className="px-3 py-2 text-center">
+                                    <button 
+                                      onClick={() => removeInvoiceItem(i)} 
+                                      className="w-8 h-8 flex items-center justify-center text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-all mx-auto"
+                                      title="Elimina riga"
+                                    >
+                                      <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                                        <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                                      </svg>
+                                    </button>
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                      
+                      {/* BOTTONI */}
+                      <div className="flex flex-col sm:flex-row gap-3">
+                        <button onClick={addInvoiceItem} className="px-5 py-2.5 bg-white text-gray-700 rounded-lg hover:bg-gray-50 font-medium flex items-center justify-center gap-2 border-2 border-gray-300 transition-all hover:border-gray-400">
+                          <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M12 4.5v15m7.5-7.5h-15" />
+                          </svg>
+                          Aggiungi Riga
+                        </button>
+                        {editingInvoice ? (
+                          <>
+                            <button onClick={updateInvoice} disabled={isLoading} className="px-6 py-2.5 bg-green-600 text-white rounded-lg hover:bg-green-700 font-medium transition-all shadow-sm hover:shadow">
+                              Aggiorna Fattura
+                            </button>
+                            <button onClick={resetForm} className="px-5 py-2.5 bg-gray-600 text-white rounded-lg hover:bg-gray-700 font-medium transition-all">
+                              Annulla
+                            </button>
+                          </>
+                        ) : (
+                          <button onClick={saveInvoice} disabled={isLoading} className="flex items-center justify-center gap-2 px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-all shadow-sm hover:shadow">
+                            <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                              <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 3.75V16.5L12 14.25 7.5 16.5V3.75m9 0H18A2.25 2.25 0 0 1 20.25 6v12A2.25 2.25 0 0 1 18 20.25H6A2.25 2.25 0 0 1 3.75 18V6A2.25 2.25 0 0 1 6 3.75h1.5m9 0h-9" />
+                            </svg>
+                            Salva Fattura
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    
+                    <div className="bg-white rounded-lg shadow p-6">
+                      <h2 className="text-2xl font-bold mb-4">Fatture inserite ({invoices.filter(inv => {
+                        const matchSearch = invoiceSearchQuery === '' || 
+                          (inv.number && String(inv.number).toLowerCase().includes(invoiceSearchQuery.toLowerCase())) ||
+                          (inv.items && inv.items.some(it => it.product && String(it.product).toLowerCase().includes(invoiceSearchQuery.toLowerCase())));
+                        const matchYear = invoiceYearFilter === 'all' || String(inv.year) === invoiceYearFilter;
+                        return matchSearch && matchYear;
+                      }).length})</h2>
+                      
+                      {/* Filtri */}
+                      <div className="mb-4 flex flex-col sm:flex-row gap-3">
+                        <div className="relative flex-1">
+                          <svg className="absolute left-3 top-3 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+                          </svg>
+                          <input
+                            type="text"
+                            value={invoiceSearchQuery}
+                            onChange={e => setInvoiceSearchQuery(e.target.value)}
+                            placeholder="Cerca per numero fattura o prodotto..."
+                            className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          />
+                        </div>
+                        <select 
+                          value={invoiceYearFilter} 
+                          onChange={e => setInvoiceYearFilter(e.target.value)} 
+                          className="px-4 py-2.5 border border-gray-300 rounded-lg bg-white font-medium focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                        >
+                          <option value="all">Tutti gli anni</option>
+                          {YEARS.map(y => <option key={y} value={y}>{y}</option>)}
+                        </select>
+                      </div>
+                      
+                      <div className="space-y-3">
+                        {invoices.slice().sort((a, b) => b.date.localeCompare(a.date)).filter(inv => {
+                          const matchSearch = invoiceSearchQuery === '' || 
+                            (inv.number && String(inv.number).toLowerCase().includes(invoiceSearchQuery.toLowerCase())) ||
+                            (inv.items && inv.items.some(it => it.product && String(it.product).toLowerCase().includes(invoiceSearchQuery.toLowerCase())));
+                          const matchYear = invoiceYearFilter === 'all' || String(inv.year) === invoiceYearFilter;
+                          return matchSearch && matchYear;
+                        }).map(inv => (
+                          <div key={inv.id} className="border rounded-lg p-4 hover:bg-gray-50 flex justify-between items-start">
+                            <div>
+                              <div className="font-bold text-lg">{inv.number} - {inv.date} ({inv.year})</div>
+                              {inv.shippingCost > 0 && <div className="text-sm text-gray-600">Spese spedizione: €{inv.shippingCost.toFixed(2)}</div>}
+                              <div className="text-sm text-gray-700 mt-2">
+                                {inv.items.map((it, idx) => (
+                                  <div key={idx}>
+                                    • {it.product}: {it.quantity} pz + {it.freebies || 0} omaggi @ €{it.priceGross} {it.discount > 0 && `(sconto ${it.discount}%)`}
+                                  </div>
+                                ))}
+                              </div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button 
+                                onClick={() => startEditInvoice(inv)} 
+                                disabled={isLoading} 
+                                className="w-9 h-9 flex items-center justify-center text-blue-600 hover:text-blue-700 hover:bg-blue-50 rounded-lg transition-all"
+                                title="Modifica fattura"
+                              >
+                                <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" />
+                                </svg>
+                              </button>
+                              <button 
+                                onClick={() => deleteInvoice(inv.id)} 
+                                disabled={isLoading} 
+                                className="w-9 h-9 flex items-center justify-center text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-all"
+                                title="Elimina fattura"
+                              >
+                                <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* NOTE DI CREDITO */}
+                {activeTab === 'credits' && (
+                  <div className="space-y-6 sm:space-y-8">
+                    <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+                      <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6">Nuova Nota</h2>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 sm:gap-6 max-w-lg">
+                        <div>
+                          <label className="block text-sm font-medium mb-1">Data</label>
+                          <div className="flex justify-center sm:justify-start">
+                            <input type="date" value={creditDate} onChange={e => setCreditDate(e.target.value)} className="w-full px-3 sm:px-4 py-2 border rounded-lg text-sm sm:text-base" />
+                          </div>
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium mb-1">Importo €</label>
+                          <input type="number" step="0.01" value={creditAmount} onChange={e => setCreditAmount(e.target.value)} placeholder="es. 250.00" className="w-full px-3 sm:px-4 py-2 border rounded-lg text-sm sm:text-base" />
+                        </div>
+                      </div>
+                      <button onClick={saveCreditNote} disabled={isLoading} className="flex items-center justify-center gap-2 mt-6 px-6 py-3 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium transition-all shadow-sm hover:shadow">
+                        <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M16.5 3.75V16.5L12 14.25 7.5 16.5V3.75m9 0H18A2.25 2.25 0 0 1 20.25 6v12A2.25 2.25 0 0 1 18 20.25H6A2.25 2.25 0 0 1 3.75 18V6A2.25 2.25 0 0 1 6 3.75h1.5m9 0h-9" />
+                        </svg>
+                        Salva Nota
+                      </button>
+                    </div>
+                    
+                    <div className="bg-white rounded-lg shadow p-6">
+                      <h2 className="text-2xl font-bold mb-4">Note di Credito ({creditNotes.length})</h2>
+                      <div className="space-y-3">
+                        {creditNotes.slice().sort((a, b) => {
+                          const dateA = a.date || String(a.year);
+                          const dateB = b.date || String(b.year);
+                          return dateB.localeCompare(dateA);
+                        }).map(note => (
+                          <div key={note.id} className="border rounded-lg p-4 flex justify-between items-center hover:bg-gray-50">
+                            <div className="font-medium text-lg">{note.date || note.year} - € {note.amount.toFixed(2)}</div>
+                            <button 
+                              onClick={() => deleteCreditNote(note.id)} 
+                              disabled={isLoading} 
+                              className="w-9 h-9 flex items-center justify-center text-red-600 hover:text-red-700 hover:bg-red-50 rounded-lg transition-all"
+                              title="Elimina nota di credito"
+                            >
+                              <svg className="w-6 h-6" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                              </svg>
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+                
+                {/* PREZZI ONLINE */}
+                {activeTab === 'products' && (
+                  <div className="space-y-6">
+                    {/* Form Aggiungi/Modifica Prodotto */}
+                    <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+                      <h2 className="text-xl sm:text-2xl font-bold mb-4 sm:mb-6">{editingProduct ? 'Modifica Prodotto' : 'Nuovo Prodotto'}</h2>
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mb-4">
+                        <div>
+                          <label className="block text-sm font-medium mb-1">Nome Prodotto</label>
+                          <input
+                            type="text"
+                            value={newProductName}
+                            onChange={e => setNewProductName(e.target.value)}
+                            placeholder="es. MYRIALEN GEL"
+                            className="w-full px-3 py-2 border rounded-lg"
+                          />
+                        </div>
+                        <div>
+                          <label className="block text-sm font-medium mb-1">Prezzo Online €</label>
+                          <input
+                            type="number"
+                            step="0.01"
+                            value={newProductPrice}
+                            onChange={e => setNewProductPrice(e.target.value)}
+                            placeholder="0.00"
+                            className="w-full px-3 py-2 border rounded-lg"
+                          />
+                        </div>
+                      </div>
+                      <div className="flex gap-3">
+                        <button
+                          onClick={async () => {
+                            if (!newProductName || !newProductPrice) return setModal({ show: true, type: 'warning', title: 'Campi obbligatori', message: 'Inserisci sia il nome che il prezzo del prodotto.' });
+                            setIsLoading(true);
+                            try {
+                              const action = editingProduct ? 'updateProduct' : 'addProduct';
+                              const payload = editingProduct 
+                                ? { action, password: savedPassword, oldName: editingProduct, newName: newProductName, price: parseFloat(newProductPrice) }
+                                : { action, password: savedPassword, name: newProductName, price: parseFloat(newProductPrice) };
+                              
+                              await fetch(SCRIPT_URL, {
+                                method: 'POST',
+                                body: JSON.stringify(payload)
+                              });
+                              await loadFromGoogleSheets();
+                              setNewProductName('');
+                              setNewProductPrice('');
+                              setEditingProduct(null);
+                            } catch (err) {
+                              setModal({ show: true, type: 'error', title: 'Errore prodotto', message: err.message });
+                            }
+                            setIsLoading(false);
+                          }}
+                          disabled={isLoading}
+                          className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                        >
+                          {editingProduct ? 'Aggiorna' : 'Aggiungi'}
+                        </button>
+                        {editingProduct && (
+                          <button
+                            onClick={() => {
+                              setEditingProduct(null);
+                              setNewProductName('');
+                              setNewProductPrice('');
+                            }}
+                            className="px-6 py-2.5 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium"
+                          >
+                            Annulla
+                          </button>
+                        )}
+                      </div>
+                    </div>
+                    
+                    {/* Lista Prodotti */}
+                    <div className="bg-white rounded-lg shadow p-4 sm:p-6">
+                      <h2 className="text-xl sm:text-2xl font-bold mb-4">Elenco Prodotti ({PRODUCTS.filter(p => 
+                        p.toLowerCase().includes(productListSearch.toLowerCase())
+                      ).length})</h2>
+                      
+                      {/* Barra ricerca */}
+                      <div className="mb-4">
+                        <div className="relative">
+                          <svg className="absolute left-3 top-3 w-5 h-5 text-gray-400" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="m21 21-5.197-5.197m0 0A7.5 7.5 0 1 0 5.196 5.196a7.5 7.5 0 0 0 10.607 10.607Z" />
+                          </svg>
+                          <input
+                            type="text"
+                            value={productListSearch}
+                            onChange={e => setProductListSearch(e.target.value)}
+                            placeholder="Cerca prodotto..."
+                            className="w-full pl-10 pr-4 py-2.5 border border-gray-300 rounded-lg focus:ring-2 focus:ring-blue-500 focus:border-transparent"
+                          />
+                          {productListSearch && (
+                            <button
+                              onClick={() => setProductListSearch('')}
+                              className="absolute right-3 top-3 text-gray-400 hover:text-gray-600"
+                            >
+                              <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24">
+                                <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                              </svg>
+                            </button>
+                          )}
+                        </div>
+                      </div>
+                      
+                      <div className="space-y-2">
+                        {PRODUCTS.sort().filter(product => 
+                          product.toLowerCase().includes(productListSearch.toLowerCase())
+                        ).map(product => (
+                          <div key={product} className="flex items-center justify-between p-3 border rounded-lg hover:bg-gray-50">
+                            <div className="flex-1">
+                              <div className="font-medium">{product}</div>
+                              <div className="text-sm text-gray-600">€ {onlinePrices[product]?.toFixed(2) || '0.00'}</div>
+                            </div>
+                            <div className="flex gap-2">
+                              <button
+                                onClick={() => {
+                                  setEditingProduct(product);
+                                  setNewProductName(product);
+                                  setNewProductPrice(onlinePrices[product] || '');
+                                  window.scrollTo({ top: 0, behavior: 'smooth' });
+                                }}
+                                className="w-9 h-9 flex items-center justify-center text-blue-600 hover:bg-blue-50 rounded-lg"
+                                title="Modifica prodotto"
+                              >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="m16.862 4.487 1.687-1.688a1.875 1.875 0 1 1 2.652 2.652L6.832 19.82a4.5 4.5 0 0 1-1.897 1.13l-2.685.8.8-2.685a4.5 4.5 0 0 1 1.13-1.897L16.863 4.487Zm0 0L19.5 7.125" />
+                                </svg>
+                              </button>
+                              <button
+                                onClick={async () => {
+                                  // Controlla se prodotto è in uso
+                                  const inUso = invoices.some(inv => 
+                                    inv.items.some(item => item.product === product)
+                                  );
+                                  
+                                  if (inUso) {
+                                    setWarningProduct(product);
+                                    setShowWarningModal(true);
+                                    return;
+                                  }
+                                  
+                                  setConfirmModal({
+                                    show: true,
+                                    title: 'Elimina prodotto',
+                                    message: `Sei sicuro di voler eliminare "${product}"? Il prodotto verrà eliminato definitivamente.`,
+                                    onConfirm: async () => {
+                                      setConfirmModal({ show: false, title: '', message: '', onConfirm: null });
+                                      
+                                      setIsLoading(true);
+                                      try {
+                                        console.log('Eliminazione prodotto:', product);
+                                        const response = await fetch(SCRIPT_URL, {
+                                          method: 'POST',
+                                      body: JSON.stringify({ action: 'deleteProduct', password: savedPassword, name: product })
+                                    });
+                                    const result = await response.json();
+                                    console.log('Risposta eliminazione:', result);
+                                    
+                                    if (!result.success) {
+                                      throw new Error(result.error || 'Errore sconosciuto');
+                                    }
+                                    
+                                    await loadFromGoogleSheets();
+                                      } catch (err) {
+                                        console.error('Errore eliminazione:', err);
+                                        setModal({ show: true, type: 'error', title: 'Errore eliminazione', message: err.message });
+                                      }
+                                      setIsLoading(false);
+                                    }
+                                  });
+                                }}
+                                disabled={isLoading}
+                                className="w-9 h-9 flex items-center justify-center text-red-600 hover:bg-red-50 rounded-lg"
+                                title="Elimina prodotto"
+                              >
+                                <svg className="w-5 h-5" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                                </svg>
+                              </button>
+                            </div>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+              
+              {/* Modale avviso prodotto in uso */}
+              {showWarningModal && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[10000] p-4">
+                  <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                    <div className="flex items-start gap-4">
+                      <div className="flex-shrink-0">
+                        <svg className="w-12 h-12 text-amber-500" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M10.05 4.575a1.575 1.575 0 1 0-3.15 0v3m3.15-3v-1.5a1.575 1.575 0 0 1 3.15 0v1.5m-3.15 0 .075 5.925m3.075.75V4.575m0 0a1.575 1.575 0 0 1 3.15 0V15M6.9 7.575a1.575 1.575 0 1 0-3.15 0v8.175a6.75 6.75 0 0 0 6.75 6.75h2.018a5.25 5.25 0 0 0 3.712-1.538l1.732-1.732a5.25 5.25 0 0 0 1.538-3.712l.003-2.024a.668.668 0 0 1 .198-.471 1.575 1.575 0 1 0-2.228-2.228 3.818 3.818 0 0 0-1.12 2.687M6.9 7.575V12m6.27 4.318A4.49 4.49 0 0 1 16.35 15m.002 0h-.002" />
+                        </svg>
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-lg font-bold text-gray-900 mb-2">Impossibile eliminare</h3>
+                        <p className="text-gray-700 mb-4">
+                          Il prodotto <strong>"{warningProduct}"</strong> è presente in una o più fatture.
+                        </p>
+                        <p className="text-gray-600 text-sm">
+                          Per eliminarlo, devi prima rimuovere tutte le fatture che lo contengono.
+                        </p>
+                      </div>
+                    </div>
+                    <div className="mt-6 flex justify-end">
+                      <button
+                        onClick={() => setShowWarningModal(false)}
+                        className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                      >
+                        Ho capito
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Sistema modale unificato (error, warning, success) */}
+              {modal.show && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[10000] p-4">
+                  <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                    <div className="flex items-start gap-4">
+                      <div className="flex-shrink-0">
+                        {modal.type === 'error' && (
+                          <svg className="w-12 h-12 text-red-500" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M6 18 18 6M6 6l12 12" />
+                          </svg>
+                        )}
+                        {modal.type === 'warning' && (
+                          <svg className="w-12 h-12 text-amber-500" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M10.05 4.575a1.575 1.575 0 1 0-3.15 0v3m3.15-3v-1.5a1.575 1.575 0 0 1 3.15 0v1.5m-3.15 0 .075 5.925m3.075.75V4.575m0 0a1.575 1.575 0 0 1 3.15 0V15M6.9 7.575a1.575 1.575 0 1 0-3.15 0v8.175a6.75 6.75 0 0 0 6.75 6.75h2.018a5.25 5.25 0 0 0 3.712-1.538l1.732-1.732a5.25 5.25 0 0 0 1.538-3.712l.003-2.024a.668.668 0 0 1 .198-.471 1.575 1.575 0 1 0-2.228-2.228 3.818 3.818 0 0 0-1.12 2.687M6.9 7.575V12m6.27 4.318A4.49 4.49 0 0 1 16.35 15m.002 0h-.002" />
+                          </svg>
+                        )}
+                        {modal.type === 'success' && (
+                          <svg className="w-12 h-12 text-green-500" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="m4.5 12.75 6 6 9-13.5" />
+                          </svg>
+                        )}
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-lg font-bold text-gray-900 mb-2">{modal.title}</h3>
+                        <p className="text-gray-700">{modal.message}</p>
+                      </div>
+                    </div>
+                    <div className="mt-6 flex justify-end">
+                      <button
+                        onClick={() => setModal({ show: false, type: '', title: '', message: '' })}
+                        className="px-6 py-2.5 bg-blue-600 text-white rounded-lg hover:bg-blue-700 font-medium"
+                      >
+                        OK
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+              
+              {/* Modale conferma (con Annulla e Conferma) */}
+              {confirmModal.show && (
+                <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-[10000] p-4">
+                  <div className="bg-white rounded-lg shadow-xl max-w-md w-full p-6">
+                    <div className="flex items-start gap-4">
+                      <div className="flex-shrink-0">
+                        <svg className="w-12 h-12 text-red-500" fill="none" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="m14.74 9-.346 9m-4.788 0L9.26 9m9.968-3.21c.342.052.682.107 1.022.166m-1.022-.165L18.16 19.673a2.25 2.25 0 0 1-2.244 2.077H8.084a2.25 2.25 0 0 1-2.244-2.077L4.772 5.79m14.456 0a48.108 48.108 0 0 0-3.478-.397m-12 .562c.34-.059.68-.114 1.022-.165m0 0a48.11 48.11 0 0 1 3.478-.397m7.5 0v-.916c0-1.18-.91-2.164-2.09-2.201a51.964 51.964 0 0 0-3.32 0c-1.18.037-2.09 1.022-2.09 2.201v.916m7.5 0a48.667 48.667 0 0 0-7.5 0" />
+                        </svg>
+                      </div>
+                      <div className="flex-1">
+                        <h3 className="text-lg font-bold text-gray-900 mb-2">{confirmModal.title}</h3>
+                        <p className="text-gray-700">{confirmModal.message}</p>
+                      </div>
+                    </div>
+                    <div className="mt-6 flex justify-end gap-3">
+                      <button
+                        onClick={() => setConfirmModal({ show: false, title: '', message: '', onConfirm: null })}
+                        className="px-6 py-2.5 bg-gray-200 text-gray-700 rounded-lg hover:bg-gray-300 font-medium"
+                      >
+                        Annulla
+                      </button>
+                      <button
+                        onClick={confirmModal.onConfirm}
+                        className="px-6 py-2.5 bg-red-600 text-white rounded-lg hover:bg-red-700 font-medium"
+                      >
+                        Elimina
+                      </button>
+                    </div>
+                  </div>
+                </div>
+              )}
+            </div>
+          );
+        }
+        
+        ReactDOM.render(<App />, document.getElementById('root'));
+    </script>
+</body>
+</html>
